@@ -36,9 +36,7 @@ jobs:
         with:
           node-version: 20.x
       - name: Run install
-        uses: borales/actions-yarn@v4
-        with:
-          cmd: install
+        run: npm install
       - name: Copy onnx wasm artifacts
         run: |
           mkdir -p public/js
@@ -46,9 +44,7 @@ jobs:
           cp node_modules/onnxruntime-web/dist/*.mjs public/js
           cp node_modules/onnxruntime-web/dist/*.wasm public/js
       - name: Buld production bundle
-        uses: borales/actions-yarn@v4
-        with:
-          cmd: run build
+        run: npm run build
       - name: Setup Pages
         uses: actions/configure-pages@v3
       - name: Upload artifact
