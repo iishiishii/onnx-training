@@ -44,4 +44,6 @@ jobs:
           cp node_modules/onnxruntime-web/dist/*.mjs public/js
           cp node_modules/onnxruntime-web/dist/*.wasm public/js
       - name: Buld production bundle
-        run: npm run deploy
+        run: |
+          echo "GH_TOKEN=${{ secrets.GH_TOKEN }}" >> $GITHUB_ENV
+          npm run deploy
