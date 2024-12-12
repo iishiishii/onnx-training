@@ -525,7 +525,7 @@ function App() {
     React.useEffect(() => {
         const loadVolume = async () => {
         await nvTest1.addVolumeFromUrl({
-            url: new URL("./data/lesion/sub-M2001_ses-1076_acq-tfl3_run-4_T1w_yes-lesion.nii.gz", document.baseURI).href,
+            url: new URL("./mobilenet/sub-M2001_ses-1076_acq-tfl3_run-4_T1w_yes-lesion.nii.gz", document.baseURI).href,
         }).then(() => {
             setLesion([
                 { nvimage: nvTest1.volumes[0], label: 1 }
