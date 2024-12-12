@@ -33,7 +33,7 @@ export class MriData {
 
     // inputs = [new URL("./data/images/elephant/elephant01.jpeg", document.baseURI).href];
     // input_paths = [new URL("./data/lesion/sub-M2001_ses-1076_acq-tfl3_run-4_T1w.nii.gz", document.baseURI).href];
-    label_dict = {
+    public static label_dict = {
         0: "no-lesion",
         1: "yes-lesion",
     }
@@ -104,7 +104,7 @@ export class MriData {
             // let nii = await NVImage.loadFromUrl({url: this.input_paths[i]});
             for (let j = 0; j < data[i].dimsRAS[3]; j+=this.batchSize) {
                 let batch;
-                for (const [key, value] of Object.entries(this.label_dict)) {
+                for (const [key, value] of Object.entries(MriData.label_dict)) {
                     if (data[i].name.includes(value)) {
                         let label = new Array(this.batchSize).fill(parseInt(key));
                         batch = new ort.Tensor("int64", label, [this.batchSize]);

@@ -36,7 +36,7 @@ function App() {
     // const numRows = 28;
     // const numCols = 28;
 
-    const lossNodeName = "onnx::loss::2";
+    const lossNodeName = "onnx::loss::8";
 
     const logIntervalMs = 1000;
     const waitAfterLoggingMs = 500;
@@ -72,8 +72,6 @@ function App() {
     const [imageLayers, setImageLayers] = React.useState(nvImage.volumes);
     const [lesions, setLesion] = React.useState<{ nvimage: NVImage, label: number }[]>([]);
     const [lesionPredictions, setLesionPredictions] = React.useState<number[]>([]);
-
-    // logging helper functions
 
     function toggleMoreInfoIsCollapsed() {
         setMoreInfoIsCollapsed(!moreInfoIsCollapsed);
@@ -139,7 +137,7 @@ function App() {
         const predictions = [];
         const [batchSize, numClasses] = results.dims;
         for (let i = 0; i < batchSize; ++i) {
-            const probabilities = results.data.slice(i * numClasses, (i + 1) * numClasses) as Float32Array;
+            const probabilities =  results.data.slice(i * numClasses, (i + 1) * numClasses) as Float32Array;
             const resultsLabel = indexOfMax(probabilities);
             predictions.push(resultsLabel);
         }
@@ -209,7 +207,7 @@ function App() {
     };
 
     async function updateLesionPredictions(session: ort.TrainingSession) {
-        console.log("updateLesionPredictions", lesions[0])
+        // console.log("updateLesionPredictions", lesions[0])
         // const input = new Float32Array(lesions[0].nvimage.dimsRAS[1] * lesions[0].nvimage.dimsRAS[2] * 3);
         const batchSize = Math.floor(lesions[0].nvimage.dimsRAS[3]/10);
         const batchShape = [batchSize, 3, 224, 224];
@@ -235,7 +233,6 @@ function App() {
                 resultData[i * tensors[0].data.length + j] = tensors[i].data[j];
             }   
         }
-        console.log("sliceTensor ", tensors)
         labels = new Array(batchSize).fill(lesions[0].label);
 
         const feeds = {
@@ -243,11 +240,8 @@ function App() {
             // input: sliceTensor.reshape(batchShape),
             labels: new ort.Tensor('int64', labels, [batchSize])
         };
-        console.log("updateLesionPredictions feeds ", feeds)
         const results = await session.runEvalStep(feeds);
-        console.log("updateLesionPredictions results ", results)
         const predictions = getPredictions(results['output']);
-        console.log("predictions ", predictions)
         setLesionPredictions(predictions.slice(0, lesions.length));
     }
 
@@ -269,7 +263,6 @@ function App() {
                 input: batch.data,
                 labels: batch.labels
             }
-            console.log("feeds ", feeds)
             // call train step
             let results;
             try {
@@ -277,7 +270,6 @@ function App() {
             } catch (err) {
                 console.log("Error in runTrainStep: ", err);
             }
-            console.log("results ", results)
             // updating UI with metrics
             const loss = parseFloat((results[lossNodeName].data as string[])[0]);
             setTrainingLosses(losses => losses.concat(loss));
@@ -289,11 +281,11 @@ function App() {
             await session.runOptimizerStep();
             await session.lazyResetGrad();
             // update digit predictions
-            // try {
-            //     await updateLesionPredictions(session);
-            // } catch (err) {
-            //     console.log("Error updating digit predictions: ", err);
-            // }
+            try {
+                await updateLesionPredictions(session);
+            } catch (err) {
+                console.log("Error updating digit predictions: ", err);
+            }
         }
         return iterationsPerSecond;
     }
@@ -345,13 +337,13 @@ function App() {
         // const niftiDataset = new MnistData(batchSize, maxNumTrainSamples, maxNumTestSamples);
         // const niftiDataset = new MriData(batchSize, imageLayers, labelLayers, maxNumTrainSamples, maxNumTestSamples);
         const niftiDataset = new MriData(batchSize, imageLayers, [nvTest1.volumes[0]], maxNumTrainSamples, maxNumTestSamples);
-        console.log("niftiDataset ", niftiDataset)
+
         lastLogTime = Date.now();
-        // try {
-        //     await updateLesionPredictions(trainingSession);
-        // } catch (err) {
-        //     console.log("Error updating digit predictions: ", err);
-        // }
+        try {
+            await updateLesionPredictions(trainingSession);
+        } catch (err) {
+            console.log("Error updating digit predictions: ", err);
+        }
 
         const startTrainingTime = Date.now();
         showStatusMessage('Training started');
@@ -359,7 +351,7 @@ function App() {
         let testAcc = 0;
         for (let epoch = 0; epoch < numEpochs; epoch++) {
             itersPerSecCumulative += await runTrainingEpoch(trainingSession, niftiDataset, epoch);
-            // testAcc = await runTestingEpoch(trainingSession, niftiDataset, epoch);
+            testAcc = await runTestingEpoch(trainingSession, niftiDataset, epoch);
         }
         const trainingTimeMs = Date.now() - startTrainingTime;
         showStatusMessage(`Training completed. Final test set accuracy: ${(100 * testAcc).toFixed(2)}% | Total training time: ${trainingTimeMs / 1000} seconds | Average iterations / second: ${(itersPerSecCumulative / numEpochs).toFixed(2)}`);
@@ -447,7 +439,6 @@ function App() {
 
 
     function renderTrainingImages() {
-        console.log(imageLayers)
         return (<div className="section">
         <Grid container spacing={2}>
         <div style={{ width: "100%" }}>
@@ -478,7 +469,6 @@ function App() {
         <h4>Testing images</h4>
         <Grid container spacing={2}>
             {lesions.map((lesion, nvIdx) => {
-                console.log(lesion)
             const { nvimage, label } = lesion
             // const rgdPixels = getPixels(pixels, numRows, numCols)
             return (<Grid key={nvIdx} item xs={6} sm={3} md={2}>
@@ -487,8 +477,8 @@ function App() {
                                 {lesionPredictions[nvIdx] !== undefined ?
                                     (lesionPredictions[nvIdx] === label ?
                                         `✅ ${lesionPredictions[nvIdx]}`
-                                        : `❌ ${lesionPredictions[nvIdx]} (Expected ${label})`)
-                                    : `Expecting lesion`
+                                        : `❌ ${lesionPredictions[nvIdx]} (Expected ${MriData.label_dict[label]})`)
+                                    : `Expecting ${MriData.label_dict[label]}`
                                 }
                             </div>
 
