@@ -3,8 +3,6 @@ import React from 'react';
 import './App.css';
 import Plot from 'react-plotly.js';
 import * as ort from 'onnxruntime-web/training';
-import { MnistData } from './mnist';
-import { Digit } from './Digit';
 import { NiivuePanel } from './Niivue';
 import { NVImage, Niivue } from "@niivue/niivue";
 import { MriData } from './mri';
@@ -25,18 +23,18 @@ const nvImage = new Niivue({
     crosshairColor: [244, 243, 238, 0.5],
   });
 
-  const nvTest2 = new Niivue({
-    // loadingText: "Loading",
-    dragAndDropEnabled: false,
-    textHeight: 0.02,
-    backColor: [0, 0, 0, 1],
-    crosshairColor: [244, 243, 238, 0.5],
-  });
+//   const nvTest2 = new Niivue({
+//     // loadingText: "Loading",
+//     dragAndDropEnabled: false,
+//     textHeight: 0.02,
+//     backColor: [0, 0, 0, 1],
+//     crosshairColor: [244, 243, 238, 0.5],
+//   });
 
 function App() {
     // constants
-    const numRows = 28;
-    const numCols = 28;
+    // const numRows = 28;
+    // const numCols = 28;
 
     const lossNodeName = "onnx::loss::2";
 
@@ -56,8 +54,8 @@ function App() {
     const [trainingLosses, setTrainingLosses] = React.useState<number[]>([]);
     const [testAccuracies, setTestAccuracies] = React.useState<number[]>([]);
 
-    const [digits, setDigits] = React.useState<{ pixels: Float32Array, label: number }[]>([])
-    const [digitPredictions, setDigitPredictions] = React.useState<number[]>([])
+    // const [digits, setDigits] = React.useState<{ pixels: Float32Array, label: number }[]>([])
+    // const [digitPredictions, setDigitPredictions] = React.useState<number[]>([])
 
     const [isTraining, setIsTraining] = React.useState<boolean>(false);
 
@@ -72,8 +70,8 @@ function App() {
 
     // niivue
     const [imageLayers, setImageLayers] = React.useState(nvImage.volumes);
-    // const [labelLayers, setLabelLayers] = React.useState(nvLabel.volumes);
-
+    const [lesions, setLesion] = React.useState<{ nvimage: NVImage, label: number }[]>([]);
+    const [lesionPredictions, setLesionPredictions] = React.useState<number[]>([]);
 
     // logging helper functions
 
@@ -210,26 +208,47 @@ function App() {
         }
     };
 
-    async function updateDigitPredictions(session: ort.TrainingSession) {
-        const input = new Float32Array(digits.length * numRows * numCols);
-        const batchShape = [digits.length, numRows * numCols];
-        const labels = [];
-        for (let i = 0; i < digits.length; ++i) {
-            const pixels = digits[i].pixels;
-            for (let j = 0; j < pixels.length; ++j) {
-                input[i * pixels.length + j] = MnistData.normalize(pixels[j]);
-            }
-            labels.push(BigInt(digits[i].label));
+    async function updateLesionPredictions(session: ort.TrainingSession) {
+        console.log("updateLesionPredictions", lesions[0])
+        // const input = new Float32Array(lesions[0].nvimage.dimsRAS[1] * lesions[0].nvimage.dimsRAS[2] * 3);
+        const batchSize = Math.floor(lesions[0].nvimage.dimsRAS[3]/10);
+        const batchShape = [batchSize, 3, 224, 224];
+        let tensors = [];
+        let labels;
+        const nvimage = lesions[0].nvimage;
+
+        for (let i = batchSize; i < batchSize*2; i++) {
+            // for (let j = 0; j < nvimage.dimsRAS[1] * nvimage.dimsRAS[2]; ++j) {
+                // const slice = nvimage.img.slice(j * nvimage.dimsRAS[1] * nvimage.dimsRAS[2], (j + 1) * nvimage.dimsRAS[1] * nvimage.dimsRAS[2]);
+                // let slice_rgb = MriData.stackSliceToRGB(slice);
+                // input[i * nvimage.dimsRAS[1] * nvimage.dimsRAS[2] + j] = MriData(pixels[j]);
+                tensors.push(MriData.getSlice(nvimage, i));
+                // console.log("slice ", MriData.getSlice(nvimage, i))
+            // }
+            // labels.push(BigInt(lesions[i].label));
         }
 
-        const feeds = {
-            input: new ort.Tensor('float32', input, batchShape),
-            labels: new ort.Tensor('int64', new BigInt64Array(labels), [digits.length])
-        };
+        let resultData = [];
+        for (let i = 0; i < tensors.length; i++) {
+            for (let j = 0; j < tensors[0].data.length; j++) {
+            // resultData.push(...tensors[i+k].data);
+                resultData[i * tensors[0].data.length + j] = tensors[i].data[j];
+            }   
+        }
+        console.log("sliceTensor ", tensors)
+        labels = new Array(batchSize).fill(lesions[0].label);
 
+        const feeds = {
+            input: new ort.Tensor('float32', resultData, batchShape),
+            // input: sliceTensor.reshape(batchShape),
+            labels: new ort.Tensor('int64', labels, [batchSize])
+        };
+        console.log("updateLesionPredictions feeds ", feeds)
         const results = await session.runEvalStep(feeds);
+        console.log("updateLesionPredictions results ", results)
         const predictions = getPredictions(results['output']);
-        setDigitPredictions(predictions.slice(0, digits.length));
+        console.log("predictions ", predictions)
+        setLesionPredictions(predictions.slice(0, lesions.length));
     }
 
     // training & testing functions
@@ -270,12 +289,16 @@ function App() {
             await session.runOptimizerStep();
             await session.lazyResetGrad();
             // update digit predictions
-            // await updateDigitPredictions(session);
+            // try {
+            //     await updateLesionPredictions(session);
+            // } catch (err) {
+            //     console.log("Error updating digit predictions: ", err);
+            // }
         }
         return iterationsPerSecond;
     }
 
-    async function runTestingEpoch(session: ort.TrainingSession, dataSet: MnistData, epoch: number): Promise<number> {
+    async function runTestingEpoch(session: ort.TrainingSession, dataSet: MriData, epoch: number): Promise<number> {
         let batchNum = 0;
         let totalNumBatches = dataSet.getNumTestBatches();
         let numCorrect = 0;
@@ -283,7 +306,7 @@ function App() {
         let accumulatedLoss = 0;
         const epochStartTime = Date.now();
         await logMessage(`TESTING | Epoch: ${String(epoch + 1).padStart(2)} / ${numEpochs} | Starting testing...`)
-        for await (const batch of dataSet.testBatches()) {
+        for await (const batch of dataSet.testingBatches()) {
             ++batchNum;
 
             // create input
@@ -314,24 +337,29 @@ function App() {
 
         setIsTraining(true);
         if (maxNumTrainSamples > MriData.MAX_NUM_TRAIN_SAMPLES || maxNumTestSamples > MriData.MAX_NUM_TEST_SAMPLES) {
-            showErrorMessage(`Max number of training samples (${maxNumTrainSamples}) or test samples (${maxNumTestSamples}) exceeds the maximum allowed (${MnistData.MAX_NUM_TRAIN_SAMPLES} and ${MnistData.MAX_NUM_TEST_SAMPLES}, respectively). Please try again.`);
+            showErrorMessage(`Max number of training samples (${maxNumTrainSamples}) or test samples (${maxNumTestSamples}) exceeds the maximum allowed (${MriData.MAX_NUM_TRAIN_SAMPLES} and ${MriData.MAX_NUM_TEST_SAMPLES}, respectively). Please try again.`);
             return;
         }
 
         const trainingSession = await loadTrainingSession();
         // const niftiDataset = new MnistData(batchSize, maxNumTrainSamples, maxNumTestSamples);
         // const niftiDataset = new MriData(batchSize, imageLayers, labelLayers, maxNumTrainSamples, maxNumTestSamples);
-        const niftiDataset = new MriData(batchSize, imageLayers, maxNumTrainSamples, maxNumTestSamples);
+        const niftiDataset = new MriData(batchSize, imageLayers, [nvTest1.volumes[0]], maxNumTrainSamples, maxNumTestSamples);
         console.log("niftiDataset ", niftiDataset)
         lastLogTime = Date.now();
-        // await updateDigitPredictions(trainingSession);
+        // try {
+        //     await updateLesionPredictions(trainingSession);
+        // } catch (err) {
+        //     console.log("Error updating digit predictions: ", err);
+        // }
+
         const startTrainingTime = Date.now();
         showStatusMessage('Training started');
         let itersPerSecCumulative = 0;
         let testAcc = 0;
         for (let epoch = 0; epoch < numEpochs; epoch++) {
             itersPerSecCumulative += await runTrainingEpoch(trainingSession, niftiDataset, epoch);
-            // testAcc = await runTestingEpoch(trainingSession, dataSet, epoch);
+            // testAcc = await runTestingEpoch(trainingSession, niftiDataset, epoch);
         }
         const trainingTimeMs = Date.now() - startTrainingTime;
         showStatusMessage(`Training completed. Final test set accuracy: ${(100 * testAcc).toFixed(2)}% | Total training time: ${trainingTimeMs / 1000} seconds | Average iterations / second: ${(itersPerSecCumulative / numEpochs).toFixed(2)}`);
@@ -449,18 +477,28 @@ function App() {
         return (<div className="section">
         <h4>Testing images</h4>
         <Grid container spacing={2}>
-        <div style={{ width: "50%" }}>
-            <NiivuePanel
-                nv={nvTest1}
-                panelWidth="75%"
-            ></NiivuePanel>
-        </div>
-        <div style={{ width: "50%" }}>
-            <NiivuePanel
-                nv={nvTest2}
-                panelWidth="75%"
-            ></NiivuePanel>
-        </div>
+            {lesions.map((lesion, nvIdx) => {
+                console.log(lesion)
+            const { nvimage, label } = lesion
+            // const rgdPixels = getPixels(pixels, numRows, numCols)
+            return (<Grid key={nvIdx} item xs={6} sm={3} md={2}>
+                        <div style={{ width: "50%" }}>
+                            <div>
+                                {lesionPredictions[nvIdx] !== undefined ?
+                                    (lesionPredictions[nvIdx] === label ?
+                                        `✅ ${lesionPredictions[nvIdx]}`
+                                        : `❌ ${lesionPredictions[nvIdx]} (Expected ${label})`)
+                                    : `Expecting lesion`
+                                }
+                            </div>
+
+                        </div>
+                    </Grid>)
+            })}
+        <NiivuePanel
+            nv={nvTest1}
+            panelWidth="75%"
+        ></NiivuePanel>
         </Grid>
         </div>)
     }
@@ -498,12 +536,17 @@ function App() {
         const loadVolume = async () => {
         await nvTest1.addVolumeFromUrl({
             url: new URL("./data/lesion/sub-M2001_ses-1076_acq-tfl3_run-4_T1w_yes-lesion.nii.gz", document.baseURI).href,
+        }).then(() => {
+            setLesion([
+                { nvimage: nvTest1.volumes[0], label: 1 }
+            ]);
         });
-        await nvTest2.addVolumeFromUrl({
-            url: new URL("./data/no-lesion/HLN-12-12_256_t1weighted_no-lesion.nii.gz", document.baseURI).href,
-        });
+        // await nvTest2.addVolumeFromUrl({
+        //     url: new URL("./data/no-lesion/HLN-12-12_256_t1weighted_no-lesion.nii.gz", document.baseURI).href,
+        // });
     }
         loadVolume();
+
     }, [])
 
     // component HTML
@@ -514,7 +557,7 @@ function App() {
                 <p>
                     This demo showcases using <Link href="https://onnxruntime.ai/docs/">ONNX Runtime Training for Web</Link> to fine-tune a MobileNetV2 model for a medical image classification task between two classes: "contains lesion" and "no lesion."
                     The model takes a 2D image of shape [1,3,224,224] so each slice in the volume is resized to be in that input shape and normalized by the mean (0.485, 0.456, 0.406) and the standard deviation (0.229, 0.224, 0.225).
-                    The training set contains {MnistData.MAX_NUM_TRAIN_SAMPLES} 2D slices and the test set contains {MnistData.MAX_NUM_TEST_SAMPLES} 2D slices.
+                    The training set contains {MriData.MAX_NUM_TRAIN_SAMPLES} 2D slices and the test set contains {MriData.MAX_NUM_TEST_SAMPLES} 2D slices.
                     The training artifacts for the model and its weights altogether take up 8.6MB of storage, with the largest components being the 8.5MB checkpoint file and the 56KB eval model ONNX file.
                 </p>
             </div>
@@ -603,13 +646,13 @@ function App() {
                             onChange={(e) => setMaxNumTrainSamples(Number(e.target.value))}
                         />
                     </Grid>
-                    <Grid item xs={12} md={4}>
+                    {/* <Grid item xs={12} md={4}>
                         <TextField type="number"
                             label="Max number of test samples"
                             value={maxNumTestSamples}
                             onChange={(e) => setMaxNumTestSamples(Number(e.target.value))}
                         />
-                    </Grid>
+                    </Grid> */}
                 </Grid>
 
             </div>

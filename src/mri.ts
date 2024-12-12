@@ -11,7 +11,7 @@ import { NVImage, Niivue } from "@niivue/niivue";
 
 export class MriData {
 	static readonly BATCH_SIZE = 1
-	static readonly MAX_NUM_TRAIN_SAMPLES = 10
+	static readonly MAX_NUM_TRAIN_SAMPLES = 200
 	static readonly MAX_NUM_TEST_SAMPLES = 1
 
 	static readonly pixelMax = 255
@@ -19,10 +19,11 @@ export class MriData {
 	static readonly pixelStd = [0.229, 0.224, 0.225]
 
     constructor(
-		public batchSize = MriData.BATCH_SIZE,
-        public trainingData = [],
-		public maxNumTrainSamples = MriData.MAX_NUM_TRAIN_SAMPLES,
-		public maxNumTestSamples = MriData.MAX_NUM_TEST_SAMPLES,
+      public batchSize = MriData.BATCH_SIZE,
+      public trainingData = [],
+      public testingData = [],
+      public maxNumTrainSamples = MriData.MAX_NUM_TRAIN_SAMPLES,
+      public maxNumTestSamples = MriData.MAX_NUM_TEST_SAMPLES,
 	) {
 		if (batchSize <= 0) {
 			throw new Error("batchSize must be > 0")
@@ -41,6 +42,10 @@ export class MriData {
 		return Math.floor(this.maxNumTrainSamples / this.batchSize)
 	}
 
+  public getNumTestBatches(): number {
+		return Math.floor(this.maxNumTestSamples / this.batchSize)
+	}
+
 	private *batches(data: ort.Tensor[], labels: ort.Tensor[]) {
 		for (let batchIndex = 0; batchIndex < data.length; ++batchIndex) {
 			yield {
@@ -52,25 +57,32 @@ export class MriData {
 
     public async * trainingBatches() {
 		// Avoid keeping data in memory.
-		const trainingData = await this.prepareImagesTensor()
-		const trainingLabels = await this.prepareLabelsTensor()
-		yield* this.batches(trainingData, trainingLabels)
+		const trainingImages = await this.prepareImagesTensor(this.trainingData)
+		const trainingLabels = await this.prepareLabelsTensor(this.trainingData)
+		yield* this.batches(trainingImages, trainingLabels)
 	}
 
-    private getNumberOfSubjects(): number {
-        for (let i = 0; i < this.trainingData.length; i++) {
-            if (!this.trainingData[i].name.includes("lesion")) {
+    public async * testingBatches() {
+      // Avoid keeping data in memory.
+      const testingImages = await this.prepareImagesTensor(this.testingData)
+      const testingLabels = await this.prepareLabelsTensor(this.testingData)
+      yield* this.batches(testingImages, testingLabels)
+    }
+
+    private getNumberOfSubjects(data: NVImage[]): number {
+        for (let i = 0; i < data.length; i++) {
+            if (!data[i].name.includes("lesion")) {
                 throw new Error("Name your data to include 'lesion' or 'no-lesion'");
             }
         }
         return this.trainingData.length;
     }
 
-    getSlice = (image: NVImage, idx: number): ort.Tensor => {
+    public static getSlice = (image: NVImage, idx: number): ort.Tensor => {
         // let slices: ort.Tensor[] = new Array();
             const slice = image.img.slice(idx*image.dimsRAS[1]*image.dimsRAS[2], (idx+1)*image.dimsRAS[1]*image.dimsRAS[2]);
             
-            let slice_rgb = this.stackSliceToRGB(slice);
+            let slice_rgb = MriData.stackSliceToRGB(slice);
             // console.log("slice_rgb", slice_rgb);
             let jimp = new Jimp({
                 data: Buffer.from(slice_rgb),
@@ -80,25 +92,23 @@ export class MriData {
             // console.log("jimp", jimp);
             // slices[i-startId] = this.process(jimp);
         
-        return this.process(jimp);
+        return MriData.process(jimp);
     }
 
-    prepareLabelsTensor = async (): Promise<ort.Tensor[]> => {
+    prepareLabelsTensor = async (data: NVImage[]): Promise<ort.Tensor[]> => {
         const results = [];
-        const numSubs = this.getNumberOfSubjects(); // number of subjects counted from the zipfile
-        console.log("num subs", numSubs, this.trainingData.length)
+        const numSubs = this.getNumberOfSubjects(data); // number of subjects counted from the zipfile
 
         // const labels = new Array(this.inputs.length);
         for (let i = 0; i < numSubs; i++) {
             // let nii = await NVImage.loadFromUrl({url: this.input_paths[i]});
-            console.log("this.trainingData[i]", i, this.trainingData[i])
-            for (let j = 0; j < this.trainingData[i].dimsRAS[3]; j+=this.batchSize) {
+            for (let j = 0; j < data[i].dimsRAS[3]; j+=this.batchSize) {
                 let batch;
                 for (const [key, value] of Object.entries(this.label_dict)) {
-                    if (this.trainingData[i].name.includes(value)) {
+                    if (data[i].name.includes(value)) {
                         let label = new Array(this.batchSize).fill(parseInt(key));
                         batch = new ort.Tensor("int64", label, [this.batchSize]);
-                        console.log("label shape", this.batchSize, label, batch);
+                        // console.log("label shape", this.batchSize, label, batch);
                     }
                 }
                 results.push(batch);
@@ -108,18 +118,18 @@ export class MriData {
       return results;
     }
     
-    prepareImagesTensor = async (): Promise<ort.Tensor[]> => {
+    prepareImagesTensor = async (data: NVImage[]): Promise<ort.Tensor[]> => {
         const results = [];
-        const numSubs = this.getNumberOfSubjects(); // number of subjects counted from the zipfile
+        const numSubs = this.getNumberOfSubjects(data); // number of subjects counted from the zipfile
         let tensors: ort.Tensor[] = [];
 
         for (let i = 0; i < numSubs; i++) {
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-ignore
-            for (let j = 0; j < this.trainingData[i].dimsRAS[3]; j++) {
+            for (let j = 0; j < data[i].dimsRAS[3]; j++) {
               // for (let j = 100; j < 110; j++) {
 
-                let slice = this.getSlice(this.trainingData[i], j);
+                let slice = MriData.getSlice(data[i], j);
                 // console.log("slices", slice);
                 tensors.push(slice);
             }
@@ -170,7 +180,7 @@ export class MriData {
         return results;
       };
 
-    process = (image): ort.Tensor => {
+      public static process = (image): ort.Tensor => {
         // console.log("Processing image", image);
         try {
           image = image.resize({w: 224, h: 224});
@@ -235,7 +245,7 @@ export class MriData {
         return value;
       };
 
-      stackSliceToRGB(
+      public static stackSliceToRGB(
         buffer: Float32Array | Uint8Array | Uint16Array | Int16Array | Float64Array
       ): Float32Array {
         let bufferLength = buffer.length,

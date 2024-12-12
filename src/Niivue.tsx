@@ -10,7 +10,7 @@ export function NiivuePanel({ nv, panelWidth }: any) {
       niivue.attachToCanvas(canvas.current);
       // console.log("nv volumes ", volumes)
       // await niivue.loadVolumes(volumes);
-      niivue.setSliceType(nv.sliceTypeAxial);
+      niivue.setSliceType(nv.sliceTypeMultiplanar);
       // console.log("nv volumes ", niivue.onImageLoaded)
     }
     fetchData();
