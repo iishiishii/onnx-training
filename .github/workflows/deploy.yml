@@ -43,7 +43,12 @@ jobs:
           cp node_modules/onnxruntime-web/dist/*.js public/js
           cp node_modules/onnxruntime-web/dist/*.mjs public/js
           cp node_modules/onnxruntime-web/dist/*.wasm public/js
-      - name: Buld production bundle
-        run: |
-          echo "GH_TOKEN=${{ secrets.GH_TOKEN }}" >> $GITHUB_ENV
-          npm run deploy
+      - name: Setup Pages
+        uses: actions/configure-pages@v3
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: 'public'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
